@@ -7,7 +7,8 @@
 # Learning Sprint #2: Problem 1 Reflection
 
 ## Overview & Objective
-For Problem 1 of Learning Sprint #2 in SE/CprE 4210, our goal was to build an interactive educational tool to help other students understand low-level memory mechanics. We built the **Stack Buffer Overflow Explorer**, a client-side web application simulating a 32-bit x86 stack frame during string copy operations.
+For Problem 1 of Learning Sprint #2 in SE/CprE 4210, our goal was to build an interactive educational tool to help other students understand low-level memory mechanics. We built the **Stack Buffer Overflow Explorer**,
+a client-side web application simulating a 32-bit x86 stack frame during string copy operations.
 
 ---
 
