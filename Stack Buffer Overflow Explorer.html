@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stack Buffer Overflow Explorer</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1c2330;--mut:#667085;--card:#fff;--bd:#d6dae1;--buf:#cfe8ff;--can:#fff0b8;--fp:#ffd9b8;--ret:#e6d4ff;--hit:#ff8a80;--ok:#1a7f4b;--bad:#b42318;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161d;--fg:#e6e9ef;--mut:#9aa3b2;--card:#1b212b;--bd:#323a48;--buf:#1f3d5c;--can:#5a4b12;--fp:#5c3a1c;--ret:#41306a;--hit:#a63a33;--ok:#4cc38a;--bad:#ff8a80}}
+:root[data-theme="dark"]{--bg:#12161d;--fg:#e6e9ef;--mut:#9aa3b2;--card:#1b212b;--bd:#323a48;--buf:#1f3d5c;--can:#5a4b12;--fp:#5c3a1c;--ret:#41306a;--hit:#a63a33;--ok:#4cc38a;--bad:#ff8a80}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:18px 14px 40px}
+h1{font-size:22px;margin:0 0 4px}p.sub{color:var(--mut);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
+label{display:block;font-weight:600;font-size:13px;margin:8px 0 3px}
+input[type=text]{width:100%;box-sizing:border-box;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:14px ui-monospace,Menlo,Consolas,monospace}
+input[type=range]{width:100%}
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}.row>div{flex:1;min-width:150px}
+button{padding:6px 10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);border-radius:8px;cursor:pointer;font-size:13px}
+button:hover{border-color:var(--mut)}
+.chk{display:flex;gap:6px;align-items:center;font-weight:500;margin:4px 0}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+pre{margin:0;overflow-x:auto;font-size:13px;background:var(--bg);padding:10px;border-radius:8px}
+.mem{overflow-x:auto}
+.line{display:grid;grid-template-columns:96px repeat(4,62px) 1fr;gap:4px;align-items:center;margin-bottom:4px;min-width:520px}
+.addr{font:12px ui-monospace,Menlo,monospace;color:var(--mut)}
+.cell{height:44px;border-radius:6px;border:1px solid var(--bd);text-align:center;font:13px/1.2 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;justify-content:center}
+.cell small{color:var(--mut);font-size:11px}
+.cell.hit{background:var(--hit)!important;border-color:var(--bad);font-weight:700}
+.cell.empty{opacity:.55}
+.r-buf{background:var(--buf)}.r-can{background:var(--can)}.r-fp{background:var(--fp)}.r-ret{background:var(--ret)}
+.tag{font-size:12px;color:var(--mut);padding-left:6px}
+#out{border-left:5px solid var(--ok);}
+#out.bad{border-left-color:var(--bad)}
+#out h2{margin:0 0 4px;font-size:16px}
+.note{font-size:13px;color:var(--mut)}
+</style></head><body><main>
+<h1>Stack Buffer Overflow Explorer</h1>
+<p class="sub">A teaching model of a 32-bit stack frame. Memory addresses increase downward in the grid. Nothing here runs real code; it only simulates byte writes.</p>
+
+<div class="card">
+<pre>void greet(char *input) {
+  char buf[<span id="nlab">8</span>];
+  <span id="call">strcpy(buf, input);   // no length check</span>
+}</pre>
+<div class="row">
+<div style="flex:3"><label for="inp">Input string (use <span class="mono">\xHH</span> for raw bytes, e.g. <span class="mono">\x78\x56\x34\x12</span>)</label>
+<input type="text" id="inp" value="AAAAAAAAAAAA" autocomplete="off" spellcheck="false"></div>
+<div><label for="sz">Buffer size: <b id="szv">8</b> bytes</label>
+<input type="range" id="sz" min="8" max="16" step="4" value="8"></div>
+</div>
+<div class="row" style="margin-top:6px">
+<div><label class="chk"><input type="checkbox" id="safe"> Bounded copy (<span class="mono">strncpy</span>-style fix)</label>
+<label class="chk"><input type="checkbox" id="can"> Stack canary enabled</label></div>
+<div><label for="step">Copy progress: <b id="stv"></b> bytes written</label>
+<input type="range" id="step" min="0" max="0" value="0"></div>
+</div>
+<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+<button data-v="Hello">Fits</button><button data-v="AAAAAAA">Off-by-one (NUL)</button><button data-v="AAAAAAAAAAAA">Smash saved FP</button><button data-v="AAAAAAAAAAAAAAAAAAAA">Smash return addr</button><button data-v="AAAAAAAAAAAA\x78\x56\x34\x12">Chosen return value</button>
+</div></div>
+
+<div class="card mem"><b>Stack frame</b> <span class="note">(colors: buffer, canary, saved frame pointer, return address; red = changed from original)</span>
+<div id="grid" style="margin-top:8px"></div></div>
+
+<div class="card" id="out"><h2 id="oh"></h2><div id="ob"></div></div>
+
+<div class="card note"><b>Key ideas.</b> C strings end with a NUL byte, so <span class="mono">strcpy</span> writes <i>length + 1</i> bytes, which makes the classic off-by-one. Writes move toward <i>higher</i> addresses, which is exactly where the saved frame pointer and return address live. Defenses: bounds checking (fix the bug), canaries (detect corruption before returning), and others like ASLR and non-executable stacks that are not modeled here.</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const hex=(b,n=2)=>b.toString(16).toUpperCase().padStart(n,'0');
+const ORIG={can:[0x00,0x0d,0x0a,0xff],fp:[0x10,0xf0,0xff,0xbf],ret:[0x56,0x91,0x04,0x08]};
+function parse(s){const o=[];for(let i=0;i<s.length;){const m=/^\\x([0-9a-fA-F]{2})/.exec(s.slice(i));if(m){o.push(parseInt(m[1],16));i+=4}else{for(const b of new TextEncoder().encode(s[i]))o.push(b);i++}}return o}
+function le(a){return '0x'+[...a].reverse().map(b=>hex(b)).join('')}
+function build(){
+ const N=+$('sz').value,safe=$('safe').checked,can=$('can').checked;
+ let inb=parse($('inp').value);const z=inb.indexOf(0);if(z>=0)inb=inb.slice(0,z); // strcpy stops at NUL
+ let w=inb.slice();if(safe)w=w.slice(0,N-1);w.push(0);
+ const reg=[],orig=[];
+ for(let i=0;i<N;i++){reg.push('buf['+i+']');orig.push(null)}
+ if(can)ORIG.can.forEach((b,i)=>{reg.push('canary');orig.push(b)});
+ ORIG.fp.forEach(b=>{reg.push('fp');orig.push(b)});
+ ORIG.ret.forEach(b=>{reg.push('ret');orig.push(b)});
+ return{N,safe,can,w,reg,orig,total:reg.length,inLen:inb.length};
+}
+let S;
+function sync(){
+ S=build();const st=$('step');const max=Math.min(S.w.length,S.total);
+ const keep=+st.value>=+st.max||st.dataset.auto!=='0';
+ st.max=max;if(keep||+st.value>max)st.value=max;
+ $('szv').textContent=S.N;$('nlab').textContent=S.N;
+ $('call').textContent=S.safe?'strncpy(buf, input, sizeof buf - 1);  // bounded':'strcpy(buf, input);   // no length check';
+ draw();
+}
+function draw(){
+ const k=+$('step').value;$('stv').textContent=k+' of '+Math.min(S.w.length,S.total)+(S.w.length>S.total?'+':'');
+ const {reg,orig,N,can}=S;const mem=reg.map((r,i)=>i<k?S.w[i]:(orig[i]));
+ let h='';
+ for(let r=0;r<S.total;r+=4){
+  const base=0xBFFFF000+r;const rg=reg[r].startsWith('buf')?'buf':reg[r];
+  h+='<div class="line"><span class="addr">0x'+hex(base,8)+'</span>';
+  for(let c=0;c<4;c++){const i=r+c,cls=reg[i].startsWith('buf')?'r-buf':'r-'+reg[i];
+   const v=mem[i],written=i<k,chg=orig[i]!==null&&written&&v!==orig[i];
+   const ch=v>=32&&v<127?String.fromCharCode(v):'·';
+   h+='<div class="cell '+cls+(chg?' hit':'')+(v==null?' empty':'')+'" title="'+reg[i]+'">'+(v==null?'??':hex(v))+'<small>'+(v==null?'':ch)+'</small></div>'}
+  const names={buf:'buffer',can:'canary',fp:'saved frame ptr',ret:'return address'};
+  h+='<span class="tag">'+names[rg]+(rg==='buf'?' ['+r+'..'+Math.min(r+3,N-1)+']':'')+'</span></div>'}
+ $('grid').innerHTML=h;
+ verdict(mem,k);
+}
+function verdict(mem,k){
+ const {N,can,w,total,safe,inLen}=S;let o=N+(can?4:0);
+ const seg=(s,e)=>mem.slice(s,e);
+ const canB=can?seg(N,N+4):null,fpB=seg(o,o+4),retB=seg(o+4,o+8);
+ const same=(a,b)=>a.every((x,i)=>x===b[i]);
+ const canHit=can&&!same(canB,ORIG.can),fpHit=!same(fpB,ORIG.fp),retHit=!same(retB,ORIG.ret);
+ const done=k>=Math.min(w.length,total);
+ let t,b,bad=true;
+ if(k<w.length&&!done){t='Copy in progress…';b='Drag the progress slider to watch each byte land.';bad=false}
+ else if(canHit){t='Canary corrupted → abort';b='On return, the function compares the canary to its saved value, sees a mismatch, and aborts ("*** stack smashing detected ***"). Control flow was never handed to the corrupted return address, so the overflow is detected, though the bug still exists.'}
+ else if(retHit){const v=le(retB);t='Return address overwritten';b='When <span class="mono">greet</span> returns, the CPU would load <b class="mono">'+v+'</b> as the next instruction address instead of <span class="mono">0x08049156</span>. A garbage value like <span class="mono">0x41414141</span> usually crashes (segfault). The danger is that an attacker who controls those 4 bytes controls where execution goes. That is the core of a control-flow hijack.'}
+ else if(fpHit){t='Saved frame pointer corrupted';b='The return address survived, but the caller\'s saved frame pointer changed. When the caller later uses its frame (locals, arguments), it will look in the wrong place, which can crash or misbehave. '+(w.length===N+1&&inLen===N?'This is the off-by-one case: only the terminating NUL byte spilled over.':'')}
+ else{bad=false;t=safe&&inLen>N-1?'Safe: input truncated':'Safe: everything fits';b=(safe&&inLen>N-1?'The bounded copy stopped at '+(N-1)+' bytes and added the NUL. Data was lost, but memory stayed intact. ':'')+'The input plus its NUL terminator ('+w.length+' bytes) fits inside the '+N+'-byte buffer, so neighboring memory is unchanged.'}
+ $('oh').textContent=t;$('ob').innerHTML=b;$('out').className='card'+(bad?' bad':'');
+}
+['inp','sz','safe','can'].forEach(id=>$(id).addEventListener('input',()=>{$('step').dataset.auto='1';sync()}));
+$('step').addEventListener('input',e=>{e.target.dataset.auto='0';draw()});
+document.querySelectorAll('button[data-v]').forEach(b=>b.onclick=()=>{
+ const v=b.dataset.v;$('inp').value=v;
+ if(b.textContent==='Off-by-one (NUL)'){$('sz').value=8}
+ $('step').dataset.auto='1';sync()});
+$('step').dataset.auto='1';sync();
+</script></body></html>
